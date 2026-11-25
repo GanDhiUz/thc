@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>기술·가정 수업</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<form id="login" class="card" hidden>
+  <h1>기술·가정 수업</h1>
+  <label>반
+    <select id="cls" required>
+      <option value="">고르기</option>
+      <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+    </select>
+  </label>
+  <label>번호 <input id="num" type="number" min="1" max="99" required></label>
+  <label>개인 코드 (6자리) <input id="code" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="off" required></label>
+  <button class="primary">입장</button>
+  <div class="err" id="loginErr" role="alert"></div>
+</form>
+
+<div id="confirm" class="card" hidden>
+  <p class="big"><b id="myName"></b> 맞나요?</p>
+  <button class="primary" id="yes">네, 맞아요</button>
+  <button id="no">아니에요 (다시 입력)</button>
+</div>
+
+<div id="main" class="app" hidden>
+  <div class="bar">
+    <b id="who"></b>
+    <select id="lesson" aria-label="차시"></select>
+    <button id="vPdf">교과서</button>
+    <button id="vHtml">단원 자료</button>
+    <span id="quiz"></span>
+    <span class="grow"></span>
+    <span class="badge lock" id="lockBadge" hidden>선생님 화면 고정 중</span>
+    <button id="logout">나가기</button>
+  </div>
+  <div class="body">
+    <div class="viewer">
+      <div class="pdfbox" id="pdfbox"><canvas id="canvas"></canvas></div>
+      <div class="pager" id="pager"><button id="prev" aria-label="이전 쪽">◀</button><span id="pageNo"></span><button id="next" aria-label="다음 쪽">▶</button></div>
+      <iframe id="frame" sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads" title="단원 자료" hidden></iframe>
+      <div class="empty" id="empty" hidden>자료가 아직 없습니다.</div>
+    </div>
+    <aside>
+      <b>핵심 요약</b>
+      <textarea id="summary" placeholder="교과서를 읽고 핵심 내용을 내 말로 정리해 보세요." maxlength="5000"></textarea>
+      <button class="primary" id="submit">제출하기</button>
+      <div class="muted" id="sumState"></div>
+    </aside>
+  </div>
+</div>
+
+<script type="module">
+import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, showHtml, fmtTime } from "./app.js";
+
+const pdf = new PdfView($("#canvas"));
+let me, lessons = [], cur = { lesson: null, view: "pdf", page: 1 }, room, shownLesson = null;
+const show = (id) => ["#login", "#confirm", "#main"].forEach((s) => ($(s).hidden = s !== id));
+const draftKey = () => `draft:${me.id}:${cur.lesson}`;
+
+async function start() {
+  if (!configured) { show("#login"); $("#loginErr").textContent = "app.js 에 Supabase 주소와 키를 먼저 넣어야 합니다."; return; }
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return show("#login");
+  const { data } = await sb.from("students").select("*").eq("id", session.user.id).maybeSingle();
+  if (!data) { await sb.auth.signOut(); $("#loginErr").textContent = "학생 계정이 아닙니다."; return show("#login"); }
+  me = data;
+  if (sessionStorage.getItem("confirmed") === me.id) return enter();
+  $("#myName").textContent = me.name;
+  show("#confirm");
+}
+
+$("#login").onsubmit = async (e) => {
+  e.preventDefault();
+  $("#loginErr").textContent = "";
+  const { error } = await sb.auth.signInWithPassword({ email: studentEmail($("#cls").value, $("#num").value), password: $("#code").value });
+  if (error) { $("#loginErr").textContent = "반·번호·코드를 다시 확인하세요."; return; }
+  $("#code").value = "";
+  start();
+};
+$("#yes").onclick = () => { sessionStorage.setItem("confirmed", me.id); enter(); };
+$("#no").onclick = $("#logout").onclick = async () => { sessionStorage.clear(); await sb.auth.signOut(); location.reload(); };
+
+async function enter() {
+  show("#main");
+  $("#who").textContent = `${me.class_no}반 ${me.number}번 ${me.name}`;
+  lessons = await loadLessons();
+  $("#lesson").innerHTML = lessons.map((l) => `<option value="${l.id}">${esc(l.title)}</option>`).join("");
+  cur.lesson = lessons[0]?.id ?? null;
+  ({ data: room } = await sb.from("room_state").select("*").eq("class_no", me.class_no).single());
+  sb.channel("room").on("postgres_changes", { event: "*", schema: "public", table: "room_state", filter: `class_no=eq.${me.class_no}` },
+    (p) => { room = p.new; follow(); }).subscribe();
+  follow();
+}
+
+// 선생님이 고정하면 같은 자료·같은 쪽으로 맞춘다. 늦게 들어와도 접속할 때 받은 상태로 맞춘다.
+function follow() {
+  const locked = !!room?.locked;
+  $("#lockBadge").hidden = !locked;
+  ["#lesson", "#vPdf", "#vHtml", "#prev", "#next"].forEach((s) => ($(s).disabled = locked));
+  if (locked && room.lesson_id) cur = { lesson: room.lesson_id, view: room.view, page: room.page };
+  render();
+}
+
+async function render() {
+  const l = lessons.find((x) => x.id === cur.lesson);
+  $("#lesson").value = cur.lesson ?? "";
+  $("#vPdf").classList.toggle("on", cur.view === "pdf");
+  $("#vHtml").classList.toggle("on", cur.view === "html");
+  const link = (u, t) => /^https?:\/\//.test(u ?? "") ? `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener">${t}</a> ` : "";
+  $("#quiz").innerHTML = l ? link(l.quiz_intro, "도입 퀴즈") + link(l.quiz_outro, "마무리 퀴즈") : "";
+  if (shownLesson !== cur.lesson) loadSummary();
+
+  const path = cur.view === "pdf" ? l?.pdf_path : l?.html_path;
+  $("#empty").hidden = !!path;
+  $("#pdfbox").hidden = $("#pager").hidden = !path || cur.view !== "pdf";
+  $("#frame").hidden = !path || cur.view !== "html";
+  if (!path) return;
+  try {
+    if (cur.view === "html") return await showHtml($("#frame"), path);
+    await pdf.open(path);
+    await pdf.show(cur.page);
+    cur.page = pdf.page;
+    $("#pageNo").textContent = `${pdf.page} / ${pdf.pages}`;
+  } catch (e) { $("#empty").hidden = false; $("#empty").textContent = "자료를 불러오지 못했습니다: " + e.message; }
+}
+
+$("#lesson").onchange = () => { cur = { lesson: Number($("#lesson").value), view: "pdf", page: 1 }; render(); };
+$("#vPdf").onclick = () => { cur.view = "pdf"; render(); };
+$("#vHtml").onclick = () => { cur.view = "html"; render(); };
+$("#prev").onclick = () => { cur.page--; render(); };
+$("#next").onclick = () => { cur.page++; render(); };
+let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => cur.view === "pdf" && pdf.show(cur.page), 200); });
+
+// 요약: 제출 전 글은 이 노트북에 임시 저장, 제출하면 덮어쓴다
+async function loadSummary() {
+  shownLesson = cur.lesson;
+  $("#summary").value = ""; $("#sumState").textContent = "";
+  $("#summary").disabled = $("#submit").disabled = !cur.lesson;
+  if (!cur.lesson) return;
+  const lessonAtLoad = cur.lesson;
+  const { data } = await sb.from("summaries").select("body, submitted_at").eq("student_id", me.id).eq("lesson_id", cur.lesson).maybeSingle();
+  if (lessonAtLoad !== cur.lesson) return;
+  const draft = localStorage.getItem(draftKey());
+  $("#summary").value = draft ?? data?.body ?? "";
+  $("#sumState").textContent = data ? `제출함 · ${fmtTime(data.submitted_at)}` + (draft != null ? " (고친 내용은 아직 제출 전)" : "") : "아직 제출하지 않았습니다.";
+}
+$("#summary").oninput = () => localStorage.setItem(draftKey(), $("#summary").value);
+$("#submit").onclick = async () => {
+  const body = $("#summary").value.trim();
+  if (!body) return ($("#sumState").textContent = "내용을 쓰고 제출하세요.");
+  $("#submit").disabled = true;
+  const { data, error } = await sb.from("summaries")
+    .upsert({ student_id: me.id, lesson_id: cur.lesson, body, submitted_at: new Date().toISOString() })
+    .select("submitted_at").single();
+  $("#submit").disabled = false;
+  if (error) return ($("#sumState").textContent = "제출 실패: " + error.message + " (글은 이 노트북에 남아 있습니다)");
+  localStorage.removeItem(draftKey());
+  $("#sumState").textContent = `제출함 · ${fmtTime(data.submitted_at)}`;
+};
+
+start();
+</script>
+</body>
+</html>
