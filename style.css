@@ -121,7 +121,7 @@ hr.cut { width: 100%; border: 0; border-top: 2px dashed var(--line); margin: 14p
 .sum { border: 1.5px solid var(--line); border-left: 5px solid var(--blue); border-radius: 10px; padding: 8px 10px; display: grid; gap: 4px; background: #fff; }
 .sum label { display: flex; gap: 6px; align-items: center; font-weight: 700; }
 .sum p { margin: 0; white-space: pre-wrap; font-size: .92em; }
-.sum.none { opacity: .55; border-left-color: var(--line); }
+.sum.none { color: var(--soft); border-left-color: var(--line); } /* 흐리게 하면 이탈 동그라미도 흐려져서 글자색만 */
 .board { position: fixed; inset: 0; z-index: 10; padding: 28px; overflow: auto; color: #fff; background: var(--board); border: 14px solid #8a6a45; } /* 나무 테 칠판 */
 .board .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 22px; }
 .board .item { background: #fffdf5; color: var(--ink); border-radius: 6px; padding: 20px 24px; box-shadow: 4px 4px 0 #0003; }
@@ -144,3 +144,9 @@ th { background: #eef2ff; }
   aside textarea { min-height: 140px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* 화면 이탈: 선생님 학생 목록의 색 동그라미, 학생 화면의 돌아옴 안내 */
+.dot { width: .8em; height: .8em; border-radius: 50%; flex: none; display: inline-block; vertical-align: middle; margin-right: 4px; background: #fff; border: 1.5px solid var(--line); }
+.dot.on { background: #2e9d4b; border-color: #1f6e34; }
+.dot.away { background: var(--orange); border-color: #b87400; }
+.toast { position: fixed; top: 70px; left: 50%; translate: -50% 0; z-index: 20; background: var(--orange); color: var(--ink); border: 2px solid var(--ink); border-radius: var(--r); box-shadow: 4px 4px 0 var(--ink); padding: .6em 1.2em; font-weight: 700; }

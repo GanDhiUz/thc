@@ -6,7 +6,7 @@
 <title>기술·가정 수업</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -62,12 +62,14 @@
       <textarea id="summary" placeholder="교과서를 읽고 핵심 내용을 내 말로 정리해 보세요." maxlength="5000"></textarea>
       <button class="primary" id="submit">제출하기</button>
       <div class="muted" id="sumState"></div>
+      <small class="muted">수업 중에는 선생님이 화면을 벗어났는지 볼 수 있어요</small>
     </aside>
   </div>
 </div>
+<div class="toast" id="backMsg" role="status" hidden></div>
 
 <script type="module">
-import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime } from "./app.js?v=7";
+import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime } from "./app.js?v=8";
 
 const ink = new Ink($("#ink")); // 선생님 판서: 보기만
 const mark = new Ink($("#mark"), (s) => localStorage.setItem(markKey(), JSON.stringify(s))); // 내 밑줄: 이 노트북에만
@@ -114,6 +116,37 @@ async function enter() {
   sb.channel("ink").on("postgres_changes", { event: "*", schema: "public", table: "ink", filter: `class_no=eq.${me.class_no}` },
     (p) => { const r = p.new; if (r?.lesson_id === cur.lesson && r.doc === cur.view && r.page === cur.page) loadInk(); }).subscribe();
   follow();
+  watchAway();
+}
+
+// 화면 이탈: 보는 중/벗어남만 실시간(Presence)으로 알린다. 데이터베이스에는 아무것도 남기지 않는다.
+// 단원 자료(iframe) 안을 누르면 창 초점은 iframe 으로 가지만 document.hasFocus() 는 그대로 true 라 이탈이 아니다.
+// iframe 에 초점이 있을 때 다른 프로그램으로 가면 이 창에 blur 가 안 오므로 1초마다 살핀다.
+function watchAway() {
+  const ch = sb.channel(`presence-${me.class_no}`, { config: { presence: { key: me.id } } });
+  let away = false, since = 0, note = null, hideT;
+  const check = () => {
+    const now = document.hidden || !document.hasFocus();
+    if (now === away) return;
+    away = now;
+    ch.track({ away });
+    if (away) {
+      since = Date.now();
+      if (window.Notification?.permission === "granted") note = new Notification("수업 화면으로 돌아오세요", { tag: "away", requireInteraction: true });
+    } else {
+      note?.close(); note = null;
+      const s = Math.round((Date.now() - since) / 1000);
+      $("#backMsg").textContent = `수업 화면을 벗어났었어요 (${s >= 60 ? `${Math.floor(s / 60)}분 ` : ""}${s % 60}초)`;
+      $("#backMsg").hidden = false;
+      clearTimeout(hideT); hideT = setTimeout(() => ($("#backMsg").hidden = true), 8000);
+    }
+  };
+  ch.subscribe((st) => st === "SUBSCRIBED" && ch.track({ away }));
+  ["visibilitychange", "blur", "focus"].forEach((e) => addEventListener(e, () => setTimeout(check, 0)));
+  setInterval(check, 1000);
+  $("#backMsg").onclick = () => ($("#backMsg").hidden = true);
+  // 알림 허용은 학생이 한 번 눌러야 묻는다. 거부하면 다시 묻지 않는다.
+  if (window.Notification?.permission === "default") addEventListener("pointerdown", () => Notification.requestPermission(), { once: true });
 }
 
 // 선생님이 고정하면 같은 자료·같은 쪽으로 맞춘다. 늦게 들어와도 접속할 때 받은 상태로 맞춘다.
