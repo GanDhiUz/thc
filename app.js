@@ -32,8 +32,59 @@ async function download(path) {
 }
 
 // PDF 보기: 한 쪽씩 canvas 에 그린다. 쪽수를 알고 맞추기 위해 pdf.js 를 쓴다.
+// 확대: ＋/－ 버튼(#zoomIn #zoomOut, #zoomNo 누르면 100%), 두 손가락 핀치, PDF 칸 위 Ctrl+휠. 확대 뒤엔 휠·끌기로 움직인다.
+// 두 손가락·Ctrl+휠은 펜이 켜져 있어도 확대가 먼저고, 한 손가락은 그대로 판서다.
 export class PdfView {
-  constructor(canvas, layers = []) { this.canvas = canvas; this.layers = layers; this.doc = null; this.path = null; this.page = 1; this.task = null; }
+  constructor(canvas, layers = []) {
+    Object.assign(this, { canvas, layers, doc: null, path: null, page: 1, task: null, zoom: 1, fitW: 0, at: "" });
+    const box = (this.box = canvas.closest(".pdfbox")), pts = new Map(), pen = () => layers.some((l) => l.on);
+    let z0, d0, mid;
+    const two = () => { const [a, b] = pts.values(); return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+    box.addEventListener("wheel", (e) => {
+      if (!e.ctrlKey) return; // 그냥 휠은 스크롤
+      e.preventDefault(); // PDF 칸 위에선 브라우저 확대 대신 PDF 확대 (노트북 터치패드 핀치도 Ctrl+휠로 들어온다)
+      this.setZoom(this.zoom * Math.exp(-e.deltaY / 300), e.clientX, e.clientY);
+    }, { passive: false });
+    box.addEventListener("pointerdown", (e) => {
+      if (e.target === box && e.pointerType === "mouse") return; // 스크롤 막대 끌기는 브라우저에 맡긴다
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 2) { layers.forEach((l) => l.cancel()); mid = two(); d0 = mid.d; z0 = this.zoom; } // 첫 손가락이 긋던 선은 없앤다
+      else if (!pen()) box.setPointerCapture(e.pointerId);
+    });
+    box.addEventListener("pointermove", (e) => {
+      const p = pts.get(e.pointerId);
+      if (!p) return;
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      Object.assign(p, { x: e.clientX, y: e.clientY });
+      if (pts.size >= 2) {
+        const t = two();
+        box.scrollLeft -= t.x - mid.x; box.scrollTop -= t.y - mid.y; mid = t;
+        this.setZoom((z0 * t.d) / d0, t.x, t.y);
+      } else if (!pen()) { box.scrollLeft -= dx; box.scrollTop -= dy; }
+    });
+    const up = (e) => pts.delete(e.pointerId);
+    box.addEventListener("pointerup", up);
+    box.addEventListener("pointercancel", up);
+    $("#zoomIn").onclick = () => this.setZoom(this.zoom * 1.25);
+    $("#zoomOut").onclick = () => this.setZoom(this.zoom / 1.25);
+    $("#zoomNo").onclick = () => this.setZoom(1);
+  }
+  // (cx, cy) 화면 점 아래의 내용이 제자리에 있도록 확대한다. 먼저 늘려 보여 주고 잠시 뒤 그 배율로 다시 그린다(흐리지 않게).
+  setZoom(z, cx, cy) {
+    z = Math.min(5, Math.max(1, z));
+    if (!this.doc || z === this.zoom) return;
+    const sheet = this.canvas.parentElement, r = sheet.getBoundingClientRect();
+    if (cx == null) { const b = this.box.getBoundingClientRect(); cx = b.left + b.width / 2; cy = b.top + b.height / 2; }
+    const fx = (cx - r.left) / r.width, fy = (cy - r.top) / r.height;
+    this.zoom = z;
+    this.canvas.style.width = this.fitW * z + "px";
+    const n = sheet.getBoundingClientRect();
+    this.box.scrollLeft += n.left + fx * n.width - cx;
+    this.box.scrollTop += n.top + fy * n.height - cy;
+    $("#zoomNo").textContent = Math.round(z * 100) + "%";
+    clearTimeout(this.redraw);
+    this.redraw = setTimeout(() => this.show(this.page), 150);
+  }
   get pages() { return this.doc?.numPages ?? 0; }
   async open(path) {
     if (path === this.path) return;
@@ -47,14 +98,17 @@ export class PdfView {
     if (!this.doc) return;
     this.page = Math.min(Math.max(1, page), this.pages);
     const p = await this.doc.getPage(this.page);
-    const box = this.canvas.closest(".pdfbox");
-    const base = p.getViewport({ scale: 1 });
-    const scale = Math.min(box.clientWidth / base.width, box.clientHeight / base.height) || 1;
-    const vp = p.getViewport({ scale: scale * devicePixelRatio });
+    const box = this.box, base = p.getViewport({ scale: 1 });
+    const fit = Math.min((box.clientWidth - 28) / base.width, (box.clientHeight - 28) / base.height) || 1, s = fit * this.zoom; // 28 = .pdfbox 안쪽 여백 14px × 2
+    const px = Math.min(devicePixelRatio, Math.sqrt(16e6 / (base.width * base.height * s * s))); // 캔버스 한도(약 1600만 화소)를 넘지 않게
+    const vp = p.getViewport({ scale: s * px });
     this.task?.cancel();
+    this.fitW = base.width * fit;
     Object.assign(this.canvas, { width: vp.width, height: vp.height });
-    this.canvas.style.width = vp.width / devicePixelRatio + "px";
+    this.canvas.style.width = base.width * s + "px";
     this.layers.forEach((x) => x.fit(this.canvas));
+    const at = this.path + ":" + this.page;
+    if (at !== this.at) { this.at = at; box.scrollTop = 0; } // 쪽을 넘기면 배율은 두고 맨 위로
     this.task = p.render({ canvasContext: this.canvas.getContext("2d"), viewport: vp });
     await this.task.promise.catch(() => {});
   }
@@ -77,6 +131,7 @@ export class Ink {
     Object.assign(this, { cv: canvas, onChange, strokes: [], tool: { c: "#000", w: 0.004 }, erase: false, cur: null, dirty: false });
     this.enable(false);
     canvas.onpointerdown = (e) => {
+      if (this.cur) return; // 두 번째 손가락은 확대용 (PdfView 가 cancel 한다)
       canvas.setPointerCapture(e.pointerId);
       this.cur = this.erase ? "erase" : { ...this.tool, p: [] };
       if (!this.erase) this.strokes.push(this.cur);
@@ -89,6 +144,10 @@ export class Ink {
     };
   }
   enable(on) { this.on = on; this.cv.style.pointerEvents = on ? "auto" : "none"; this.cv.style.touchAction = on ? "none" : "auto"; }
+  cancel() { // 긋던 선을 없던 일로 (지우개로 지운 것은 그대로 저장된다)
+    if (this.cur && this.cur !== "erase") { this.strokes.splice(this.strokes.indexOf(this.cur), 1); this.dirty = false; this.draw(); }
+    this.cur = null;
+  }
   set(strokes) { this.strokes = Array.isArray(strokes) ? strokes : []; this.cur = null; this.draw(); }
   fit(src) { this.cv.width = src.width; this.cv.height = src.height; this.draw(); }
   move(e) {

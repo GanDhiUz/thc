@@ -6,7 +6,7 @@
 <title>수업 진행 (선생님)</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap">
-<link rel="stylesheet" href="style.css?v=9">
+<link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 
@@ -30,6 +30,7 @@
     <div class="viewer">
       <div class="pdfbox" id="pdfbox"><div class="sheet"><canvas id="canvas"></canvas><canvas id="ink"></canvas></div></div>
       <div class="pager" id="pager"><button id="prev" aria-label="이전 쪽">◀</button><span id="pageNo"></span><button id="next" aria-label="다음 쪽">▶</button>
+        <button id="zoomOut" aria-label="축소">－</button><button id="zoomNo" title="원래 크기로">100%</button><button id="zoomIn" aria-label="확대">＋</button>
         <span class="tools">
           <button id="pen">✏ 판서</button>
           <select id="color" aria-label="펜 색"><option value="#d32f2f">빨강</option><option value="#1d2433">검정</option><option value="#1565c0">파랑</option><option value="#2e7d32">초록</option><option value="#ffd60066">형광 노랑</option></select>
@@ -103,7 +104,7 @@
 <div class="board" id="board" hidden><button class="close" id="boardClose">닫기 ✕</button><div class="grid" id="boardGrid"></div></div>
 
 <script type="module">
-import { sb, $, esc, configured, loadLessons, PdfView, Ink, wireTools, showHtml, saveHtml, printHtml, fmtTime, BOARD } from "./app.js?v=9";
+import { sb, $, esc, configured, loadLessons, PdfView, Ink, wireTools, showHtml, saveHtml, printHtml, fmtTime, BOARD } from "./app.js?v=10";
 
 const ink = new Ink($("#ink"), saveInk);
 const pdf = new PdfView($("#canvas"), [ink]);

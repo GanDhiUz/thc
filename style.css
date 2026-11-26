@@ -83,7 +83,8 @@ h1, h2, h3 { font-family: var(--title); font-weight: 400; letter-spacing: .01em;
 .body.wide { grid-template-columns: 1fr; }
 .body.wide aside { display: none; }
 .viewer { position: relative; min-height: 0; display: grid; grid-template-rows: 1fr auto; }
-.pdfbox { min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 14px; }
+.pdfbox { min-height: 0; overflow: auto; display: flex; align-items: flex-start; padding: 14px; touch-action: none; } /* 끌기·핀치는 app.js 가 직접 한다 */
+.pdfbox .sheet { margin: 0 auto; } /* justify-content:center 는 확대해서 넓어지면 왼쪽이 잘린다 */
 .pdfbox canvas { background: #fff; }
 .sheet { position: relative; border: 1.5px solid var(--ink); border-radius: 4px; box-shadow: 5px 5px 0 #1e243326; background: #fff; }
 .sheet canvas { display: block; border-radius: 3px; }
