@@ -307,7 +307,9 @@ $("#rosterGo").onclick = async () => {
   if (!rows.length) return alert("반, 번호, 이름 세 칸으로 된 줄이 없습니다.");
   $("#rosterOut").textContent = `${rows.length}명 처리 중…`;
   const { data, error } = await sb.functions.invoke("create-students", { body: { rows, reset: $("#reset").checked } });
-  if (error || data?.error) return ($("#rosterOut").textContent = "실패: " + (data?.error ?? error.message));
+  // 함수가 2xx 가 아닌 답을 주면 이유는 error.context(응답) 안에 있다
+  const why = error?.context?.json ? (await error.context.json().catch(() => null))?.error : null;
+  if (error || data?.error) return ($("#rosterOut").textContent = "실패: " + (data?.error ?? why ?? error.message));
   const table = `<table><thead><tr><th>반</th><th>번호</th><th>이름</th><th>개인 코드</th><th>결과</th></tr></thead><tbody>` +
     data.results.map((r) => `<tr><td>${r.class_no}</td><td>${r.number}</td><td>${esc(r.name)}</td><td style="font-size:1.3em;letter-spacing:.1em"><b>${r.code ?? ""}</b></td><td>${esc(r.status)}</td></tr>`).join("") + "</tbody></table>";
   $("#rosterOut").innerHTML = `<button class="primary" id="codePrint" style="margin:8px 0">코드표 인쇄</button>` + table;
