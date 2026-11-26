@@ -6,7 +6,7 @@
 <title>기술·가정 수업</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 
@@ -67,7 +67,7 @@
 </div>
 
 <script type="module">
-import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime } from "./app.js";
+import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime } from "./app.js?v=7";
 
 const ink = new Ink($("#ink")); // 선생님 판서: 보기만
 const mark = new Ink($("#mark"), (s) => localStorage.setItem(markKey(), JSON.stringify(s))); // 내 밑줄: 이 노트북에만

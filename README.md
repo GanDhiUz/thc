@@ -72,6 +72,10 @@
 ## 기능을 추가한 뒤 (2026-11 판서·PPT 추가)
 Supabase **SQL Editor** 에 `supabase/schema.sql` 을 다시 통째로 붙여 넣고 **Run** 한다 (여러 번 실행해도 안전하다).
 
+## style.css · app.js 를 고쳤을 때
+`index.html`, `teacher.html` 안의 `style.css?v=7`, `app.js?v=7` 숫자를 둘 다 하나씩 올린다.
+그래야 브라우저가 예전 파일(최대 10분 저장)을 쓰지 않고 새 파일을 받는다.
+
 ## 권한 규칙 검사 (코드를 고쳤을 때)
 ```powershell
 cd class-site\test; npm i --no-save @electric-sql/pglite; node rls.test.mjs
