@@ -38,6 +38,7 @@ export class PdfView {
   async open(path) {
     if (path === this.path) return;
     this.path = path; this.doc = null;
+    if (path === BOARD) return void (this.doc = BLANK);
     const blob = await download(path);
     const doc = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise;
     if (this.path === path) this.doc = doc;
@@ -58,6 +59,16 @@ export class PdfView {
     await this.task.promise.catch(() => {});
   }
 }
+
+// 화이트보드: 파일 없이 흰 쪽 2장(16:9). pdf.js 문서처럼 보이게 해서 PdfView·판서를 그대로 쓴다.
+export const BOARD = "board";
+const BLANK = {
+  numPages: 2,
+  getPage: async () => ({
+    getViewport: ({ scale }) => ({ width: 1600 * scale, height: 900 * scale }),
+    render: ({ canvasContext: g, viewport: v }) => { g.fillStyle = "#fff"; g.fillRect(0, 0, v.width, v.height); return { promise: Promise.resolve(), cancel() {} }; },
+  }),
+};
 
 // 판서·밑줄 층 (PDF 쪽 위에 겹친 canvas). 좌표와 굵기는 쪽 크기에 대한 비율이라 화면 크기가 달라도 같은 자리에 보인다.
 // 선 하나 = { c: 색, w: 굵기(쪽 너비 비율), p: [x, y, x, y, ...] }

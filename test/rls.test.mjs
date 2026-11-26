@@ -79,5 +79,14 @@ assert.equal((await rows(A, false, "delete from ink returning *")).length, 0, "�
 assert.equal(JSON.parse(JSON.stringify((await rows(T, true, "select strokes from ink where doc='pdf'"))[0].strokes)).length, 1, "판서가 그대로 남음");
 assert.ok(!(await as(T, true, "update room_state set view='ppt' where class_no=1")).error, "화면 상태에 ppt 허용");
 assert.ok(!(await as(T, true, "update lessons set ppt_path='lesson-1/ppt.pdf'")).error);
-await fails(T, true, "update room_state set view='board' where class_no=1");
+// 화이트보드: 파일 없는 차시에서도 판서, 같은 반만 보고 학생은 못 바꿈
+assert.ok(!(await as(T, true, "update room_state set view='board', page=2 where class_no=1")).error, "화면 상태에 board 허용");
+assert.ok(!(await as(T, true, "insert into ink(class_no,lesson_id,doc,page,strokes) values (1,1,'board',2,'[{\"c\":\"#000\",\"w\":0.004,\"p\":[0.5,0.5]}]')")).error, "화이트보드 판서 저장");
+assert.equal((await rows(A, false, "select * from ink where doc='board'")).length, 1, "1반 학생은 화이트보드 판서를 봄");
+assert.equal((await rows(B, false, "select * from ink where doc='board'")).length, 0, "2반 학생은 못 봄");
+await fails(A, false, "insert into ink(class_no,lesson_id,doc,page) values (1,1,'board',1)");
+assert.equal((await rows(A, false, "update ink set strokes='[]' where doc='board' returning *")).length, 0, "학생은 화이트보드 판서 못 바꿈");
+assert.equal((await rows(A, false, "delete from ink where doc='board' returning *")).length, 0, "학생은 화이트보드 판서 못 지움");
+await fails(T, true, "update room_state set view='xyz' where class_no=1");
+await fails(T, true, "insert into ink(class_no,lesson_id,doc,page) values (1,1,'html',1)");
 console.log("RLS 검사 모두 통과");

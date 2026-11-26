@@ -6,7 +6,7 @@
 <title>기술·가정 수업</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&display=swap">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
 
@@ -38,6 +38,7 @@
     <button id="vPdf">교과서</button>
     <button id="vPpt">PPT</button>
     <button id="vHtml">단원 자료</button>
+    <button id="vBoard">화이트보드</button>
     <span id="quiz"></span>
     <span class="grow"></span>
     <span class="badge lock" id="lockBadge" hidden>선생님 화면 고정 중</span>
@@ -69,7 +70,7 @@
 <div class="toast" id="backMsg" role="status" hidden></div>
 
 <script type="module">
-import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime } from "./app.js?v=8";
+import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime, BOARD } from "./app.js?v=9";
 
 const ink = new Ink($("#ink")); // 선생님 판서: 보기만
 const mark = new Ink($("#mark"), (s) => localStorage.setItem(markKey(), JSON.stringify(s))); // 내 밑줄: 이 노트북에만
@@ -153,7 +154,7 @@ function watchAway() {
 function follow() {
   const locked = !!room?.locked;
   $("#lockBadge").hidden = !locked;
-  ["#lesson", "#vPdf", "#vPpt", "#vHtml", "#prev", "#next"].forEach((s) => ($(s).disabled = locked));
+  ["#lesson", "#vPdf", "#vPpt", "#vHtml", "#vBoard", "#prev", "#next"].forEach((s) => ($(s).disabled = locked));
   if (locked && room.lesson_id) cur = { lesson: room.lesson_id, view: room.view, page: room.page };
   render();
 }
@@ -164,11 +165,12 @@ async function render() {
   $("#vPdf").classList.toggle("on", cur.view === "pdf");
   $("#vPpt").classList.toggle("on", cur.view === "ppt");
   $("#vHtml").classList.toggle("on", cur.view === "html");
+  $("#vBoard").classList.toggle("on", cur.view === "board");
   const link = (u, t) => /^https?:\/\//.test(u ?? "") ? `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener">${t}</a> ` : "";
   $("#quiz").innerHTML = l ? link(l.quiz_intro, "도입 퀴즈") + link(l.quiz_outro, "마무리 퀴즈") : "";
   if (shownLesson !== cur.lesson) loadSummary();
 
-  const path = l?.[cur.view + "_path"]; // pdf_path, ppt_path, html_path
+  const path = cur.view === BOARD ? l && BOARD : l?.[cur.view + "_path"]; // 화이트보드는 파일 없이 열린다
   $("#empty").hidden = !!path;
   $("#pdfbox").hidden = $("#pager").hidden = !path || cur.view === "html";
   $("#frame").hidden = !path || cur.view !== "html";
@@ -189,6 +191,7 @@ function setView(v) { lastPage[`${cur.lesson}:${cur.view}`] = cur.page; cur.view
 $("#vPdf").onclick = () => setView("pdf");
 $("#vPpt").onclick = () => setView("ppt");
 $("#vHtml").onclick = () => setView("html");
+$("#vBoard").onclick = () => setView(BOARD);
 $("#prev").onclick = () => { cur.page--; render(); };
 $("#next").onclick = () => { cur.page++; render(); };
 let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => cur.view !== "html" && pdf.show(cur.page), 200); });

@@ -43,27 +43,29 @@ create table if not exists public.summaries (
 create table if not exists public.room_state (
   class_no int primary key,
   lesson_id bigint references public.lessons on delete set null,
-  view text not null default 'pdf' check (view in ('pdf', 'html', 'ppt')),
+  view text not null default 'pdf' check (view in ('pdf', 'html', 'ppt', 'board')),
   page int not null default 1,
   locked boolean not null default false,
   updated_at timestamptz not null default now()
 );
 insert into public.room_state (class_no) values (1), (2), (3), (4), (5)
 on conflict do nothing;
--- 예전에 만든 표도 'ppt' 를 받게 규칙을 바꾼다
+-- 예전에 만든 표도 'ppt'·'board'(화이트보드) 를 받게 규칙을 바꾼다
 alter table public.room_state drop constraint if exists room_state_view_check;
-alter table public.room_state add constraint room_state_view_check check (view in ('pdf', 'html', 'ppt'));
+alter table public.room_state add constraint room_state_view_check check (view in ('pdf', 'html', 'ppt', 'board'));
 
--- 선생님 판서: 반·차시·자료(교과서/PPT)·쪽마다 한 줄. 좌표는 쪽 크기에 대한 비율.
+-- 선생님 판서: 반·차시·자료(교과서/PPT/화이트보드)·쪽마다 한 줄. 좌표는 쪽 크기에 대한 비율.
 create table if not exists public.ink (
   class_no int not null,
   lesson_id bigint not null references public.lessons on delete cascade,
-  doc text not null check (doc in ('pdf', 'ppt')),
+  doc text not null check (doc in ('pdf', 'ppt', 'board')),
   page int not null,
   strokes jsonb not null default '[]',
   updated_at timestamptz not null default now(),
   primary key (class_no, lesson_id, doc, page)
 );
+alter table public.ink drop constraint if exists ink_doc_check;
+alter table public.ink add constraint ink_doc_check check (doc in ('pdf', 'ppt', 'board'));
 
 -- 로그인한 사람에게만 표를 연다 (누가 무엇을 보는지는 아래 RLS 가 정한다). 로그인 안 한 사람(anon)에게는 열지 않는다.
 grant select, insert, update, delete on public.students, public.lessons, public.summaries, public.room_state, public.ink to authenticated;
