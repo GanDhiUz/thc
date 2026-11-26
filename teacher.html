@@ -67,8 +67,11 @@
           <label>순서 <input id="lfOrd" type="number" value="1" required></label>
           <label>제목 <input id="lfName" required placeholder="예: 4-3-1 발명의 개념"></label>
           <label>교과서 PDF <input id="lfPdf" type="file" accept="application/pdf"></label>
+          <label class="muted" hidden><input type="checkbox" id="lfPdfDel"> 올린 교과서 PDF 지우기</label>
           <label>PPT용 PDF (PowerPoint 에서 PDF 로 저장한 파일) <input id="lfPpt" type="file" accept="application/pdf"></label>
+          <label class="muted" hidden><input type="checkbox" id="lfPptDel"> 올린 PPT용 PDF 지우기</label>
           <label>단원 HTML <input id="lfHtml" type="file" accept=".html,text/html"></label>
+          <label class="muted" hidden><input type="checkbox" id="lfHtmlDel"> 올린 단원 HTML 지우기</label>
           <label>도입 퀴즈 링크 (젭퀴즈) <input id="lfQ1" type="url" placeholder="https://"></label>
           <label>마무리 퀴즈 링크 <input id="lfQ2" type="url" placeholder="https://"></label>
           <div style="display:flex;gap:6px"><button class="primary">저장</button><button type="button" id="lfReset">새로 쓰기</button></div>
@@ -254,6 +257,7 @@ $("#stuSave").onclick = () => stuDoc ? saveHtml(stuDoc.name, stuDoc.html) : aler
 $("#stuPrint").onclick = () => stuDoc ? printHtml(stuDoc.html) : alert("학생을 먼저 고르세요.");
 
 // 관리 탭: 차시 추가·고치기 (파일은 비공개 저장소로)
+const FILES = [["#lfPdf", "pdf_path", "book.pdf"], ["#lfPpt", "ppt_path", "ppt.pdf"], ["#lfHtml", "html_path", "unit.html"]];
 function editLesson(l) {
   editing = l ?? null;
   $("#lfTitle").textContent = l ? `고치기: ${l.title}` : "새 차시 추가";
@@ -261,6 +265,7 @@ function editLesson(l) {
   $("#lfName").value = l?.title ?? "";
   $("#lfQ1").value = l?.quiz_intro ?? ""; $("#lfQ2").value = l?.quiz_outro ?? "";
   $("#lfPdf").value = $("#lfPpt").value = $("#lfHtml").value = ""; $("#lfMsg").textContent = "";
+  for (const [id, col] of FILES) { $(id + "Del").checked = false; $(id + "Del").parentElement.hidden = !l?.[col]; } // 올린 파일이 있을 때만 지우기 칸
 }
 $("#lfReset").onclick = () => editLesson(null);
 $("#lessonRows").onclick = async (e) => {
@@ -278,13 +283,15 @@ $("#lessonRows").onclick = async (e) => {
 $("#lessonForm").onsubmit = async (e) => {
   e.preventDefault();
   const msg = (m) => ($("#lfMsg").textContent = m);
+  const drop = FILES.filter(([id, col]) => $(id + "Del").checked && !$(id).files[0] && editing?.[col]);
+  if (drop.length && !confirm("고른 파일을 지울까요? 그 자료 위의 판서도 함께 지워지고 되돌릴 수 없습니다.")) return;
   const row = { ord: Number($("#lfOrd").value), title: $("#lfName").value.trim(), quiz_intro: $("#lfQ1").value.trim() || null, quiz_outro: $("#lfQ2").value.trim() || null };
   msg("저장하는 중…");
   const q = editing ? sb.from("lessons").update(row).eq("id", editing.id) : sb.from("lessons").insert(row);
   const { data: saved, error } = await q.select().single();
   if (error) return msg("저장 실패: " + error.message);
   const files = {};
-  for (const [input, name, col] of [["#lfPdf", "book.pdf", "pdf_path"], ["#lfPpt", "ppt.pdf", "ppt_path"], ["#lfHtml", "unit.html", "html_path"]]) {
+  for (const [input, col, name] of FILES) {
     const f = $(input).files[0];
     if (!f) continue;
     const path = `lesson-${saved.id}/${name}`;
@@ -293,7 +300,17 @@ $("#lessonForm").onsubmit = async (e) => {
     if (upErr) return msg("파일 올리기 실패: " + upErr.message);
     files[col] = path;
   }
-  if (Object.keys(files).length) await sb.from("lessons").update(files).eq("id", saved.id);
+  for (const [, col] of drop) files[col] = null;
+  if (Object.keys(files).length) {
+    const { error: fErr } = await sb.from("lessons").update(files).eq("id", saved.id);
+    if (fErr) return msg("파일 정보 저장 실패: " + fErr.message);
+  }
+  if (drop.length) { // 표에서 먼저 뺀 뒤 저장소에서 지운다 (실패해도 학생 화면엔 안 보임)
+    const { error: rmErr } = await sb.storage.from("materials").remove(drop.map(([, col]) => editing[col]));
+    const docs = drop.map(([, col]) => col.split("_")[0]).filter((d) => d !== "html");
+    if (docs.length) await sb.from("ink").delete().eq("lesson_id", saved.id).in("doc", docs);
+    if (rmErr) msg("저장소에서 파일을 지우지 못했습니다: " + rmErr.message);
+  }
   lessons = await loadLessons(); fillLessons(); editLesson(null);
   if (!cur.lesson) { cur.lesson = saved.id; render(); }
   msg("저장했습니다. (바뀐 파일은 화면을 새로 고치면 보입니다)");
