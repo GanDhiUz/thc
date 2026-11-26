@@ -33,6 +33,7 @@
     <b id="who"></b>
     <select id="lesson" aria-label="차시"></select>
     <button id="vPdf">교과서</button>
+    <button id="vPpt">PPT</button>
     <button id="vHtml">단원 자료</button>
     <span id="quiz"></span>
     <span class="grow"></span>
@@ -41,8 +42,15 @@
   </div>
   <div class="body">
     <div class="viewer">
-      <div class="pdfbox" id="pdfbox"><canvas id="canvas"></canvas></div>
-      <div class="pager" id="pager"><button id="prev" aria-label="이전 쪽">◀</button><span id="pageNo"></span><button id="next" aria-label="다음 쪽">▶</button></div>
+      <div class="pdfbox" id="pdfbox"><div class="sheet"><canvas id="canvas"></canvas><canvas id="ink"></canvas><canvas id="mark"></canvas></div></div>
+      <div class="pager" id="pager"><button id="prev" aria-label="이전 쪽">◀</button><span id="pageNo"></span><button id="next" aria-label="다음 쪽">▶</button>
+        <span class="tools">
+          <button id="pen">✏ 밑줄</button>
+          <select id="color" aria-label="펜 색"><option value="#ffd60066">형광 노랑</option><option value="#66bb6a66">형광 초록</option><option value="#d32f2f">빨강 펜</option><option value="#1d2433">검정 펜</option><option value="#1565c0">파랑 펜</option></select>
+          <select id="size" aria-label="굵기"><option value="0.002">가늘게</option><option value="0.004" selected>보통</option></select>
+          <button id="eraser">지우개</button>
+        </span>
+      </div>
       <iframe id="frame" sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads" title="단원 자료" hidden></iframe>
       <div class="empty" id="empty" hidden>자료가 아직 없습니다.</div>
     </div>
@@ -56,12 +64,17 @@
 </div>
 
 <script type="module">
-import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, showHtml, fmtTime } from "./app.js";
+import { sb, $, esc, configured, studentEmail, loadLessons, PdfView, Ink, wireTools, showHtml, fmtTime } from "./app.js";
 
-const pdf = new PdfView($("#canvas"));
+const ink = new Ink($("#ink")); // 선생님 판서: 보기만
+const mark = new Ink($("#mark"), (s) => localStorage.setItem(markKey(), JSON.stringify(s))); // 내 밑줄: 이 노트북에만
+const pdf = new PdfView($("#canvas"), [ink, mark]);
+wireTools(mark);
+const lastPage = {};
 let me, lessons = [], cur = { lesson: null, view: "pdf", page: 1 }, room, shownLesson = null;
 const show = (id) => ["#login", "#confirm", "#main"].forEach((s) => ($(s).hidden = s !== id));
 const draftKey = () => `draft:${me.id}:${cur.lesson}`;
+const markKey = () => `mark:${me.id}:${cur.lesson}:${cur.view}:${cur.page}`;
 
 async function start() {
   if (!configured) { show("#login"); $("#loginErr").textContent = "app.js 에 Supabase 주소와 키를 먼저 넣어야 합니다."; return; }
@@ -95,6 +108,8 @@ async function enter() {
   ({ data: room } = await sb.from("room_state").select("*").eq("class_no", me.class_no).single());
   sb.channel("room").on("postgres_changes", { event: "*", schema: "public", table: "room_state", filter: `class_no=eq.${me.class_no}` },
     (p) => { room = p.new; follow(); }).subscribe();
+  sb.channel("ink").on("postgres_changes", { event: "*", schema: "public", table: "ink", filter: `class_no=eq.${me.class_no}` },
+    (p) => { const r = p.new; if (r?.lesson_id === cur.lesson && r.doc === cur.view && r.page === cur.page) loadInk(); }).subscribe();
   follow();
 }
 
@@ -102,7 +117,7 @@ async function enter() {
 function follow() {
   const locked = !!room?.locked;
   $("#lockBadge").hidden = !locked;
-  ["#lesson", "#vPdf", "#vHtml", "#prev", "#next"].forEach((s) => ($(s).disabled = locked));
+  ["#lesson", "#vPdf", "#vPpt", "#vHtml", "#prev", "#next"].forEach((s) => ($(s).disabled = locked));
   if (locked && room.lesson_id) cur = { lesson: room.lesson_id, view: room.view, page: room.page };
   render();
 }
@@ -111,14 +126,15 @@ async function render() {
   const l = lessons.find((x) => x.id === cur.lesson);
   $("#lesson").value = cur.lesson ?? "";
   $("#vPdf").classList.toggle("on", cur.view === "pdf");
+  $("#vPpt").classList.toggle("on", cur.view === "ppt");
   $("#vHtml").classList.toggle("on", cur.view === "html");
   const link = (u, t) => /^https?:\/\//.test(u ?? "") ? `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener">${t}</a> ` : "";
   $("#quiz").innerHTML = l ? link(l.quiz_intro, "도입 퀴즈") + link(l.quiz_outro, "마무리 퀴즈") : "";
   if (shownLesson !== cur.lesson) loadSummary();
 
-  const path = cur.view === "pdf" ? l?.pdf_path : l?.html_path;
+  const path = l?.[cur.view + "_path"]; // pdf_path, ppt_path, html_path
   $("#empty").hidden = !!path;
-  $("#pdfbox").hidden = $("#pager").hidden = !path || cur.view !== "pdf";
+  $("#pdfbox").hidden = $("#pager").hidden = !path || cur.view === "html";
   $("#frame").hidden = !path || cur.view !== "html";
   if (!path) return;
   try {
@@ -127,15 +143,26 @@ async function render() {
     await pdf.show(cur.page);
     cur.page = pdf.page;
     $("#pageNo").textContent = `${pdf.page} / ${pdf.pages}`;
+    loadInk();
+    try { mark.set(JSON.parse(localStorage.getItem(markKey()))); } catch { mark.set([]); }
   } catch (e) { $("#empty").hidden = false; $("#empty").textContent = "자료를 불러오지 못했습니다: " + e.message; }
 }
 
 $("#lesson").onchange = () => { cur = { lesson: Number($("#lesson").value), view: "pdf", page: 1 }; render(); };
-$("#vPdf").onclick = () => { cur.view = "pdf"; render(); };
-$("#vHtml").onclick = () => { cur.view = "html"; render(); };
+function setView(v) { lastPage[`${cur.lesson}:${cur.view}`] = cur.page; cur.view = v; cur.page = lastPage[`${cur.lesson}:${v}`] ?? 1; render(); }
+$("#vPdf").onclick = () => setView("pdf");
+$("#vPpt").onclick = () => setView("ppt");
+$("#vHtml").onclick = () => setView("html");
 $("#prev").onclick = () => { cur.page--; render(); };
 $("#next").onclick = () => { cur.page++; render(); };
-let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => cur.view === "pdf" && pdf.show(cur.page), 200); });
+let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => cur.view !== "html" && pdf.show(cur.page), 200); });
+
+// 선생님 판서 (같은 반, 지금 보는 차시·자료·쪽)
+async function loadInk() {
+  const k = markKey();
+  const { data } = await sb.from("ink").select("strokes").match({ class_no: me.class_no, lesson_id: cur.lesson, doc: cur.view, page: cur.page }).maybeSingle();
+  if (k === markKey()) ink.set(data?.strokes);
+}
 
 // 요약: 제출 전 글은 이 노트북에 임시 저장, 제출하면 덮어쓴다
 async function loadSummary() {

@@ -30,6 +30,7 @@ create table if not exists public.lessons (
   quiz_intro text,
   quiz_outro text
 );
+alter table public.lessons add column if not exists ppt_path text; -- PPT 를 PDF 로 저장해 올린 것
 
 create table if not exists public.summaries (
   student_id uuid not null references public.students on delete cascade,
@@ -42,24 +43,39 @@ create table if not exists public.summaries (
 create table if not exists public.room_state (
   class_no int primary key,
   lesson_id bigint references public.lessons on delete set null,
-  view text not null default 'pdf' check (view in ('pdf', 'html')),
+  view text not null default 'pdf' check (view in ('pdf', 'html', 'ppt')),
   page int not null default 1,
   locked boolean not null default false,
   updated_at timestamptz not null default now()
 );
 insert into public.room_state (class_no) values (1), (2), (3), (4), (5)
 on conflict do nothing;
+-- 예전에 만든 표도 'ppt' 를 받게 규칙을 바꾼다
+alter table public.room_state drop constraint if exists room_state_view_check;
+alter table public.room_state add constraint room_state_view_check check (view in ('pdf', 'html', 'ppt'));
+
+-- 선생님 판서: 반·차시·자료(교과서/PPT)·쪽마다 한 줄. 좌표는 쪽 크기에 대한 비율.
+create table if not exists public.ink (
+  class_no int not null,
+  lesson_id bigint not null references public.lessons on delete cascade,
+  doc text not null check (doc in ('pdf', 'ppt')),
+  page int not null,
+  strokes jsonb not null default '[]',
+  updated_at timestamptz not null default now(),
+  primary key (class_no, lesson_id, doc, page)
+);
 
 -- 로그인한 사람에게만 표를 연다 (누가 무엇을 보는지는 아래 RLS 가 정한다). 로그인 안 한 사람(anon)에게는 열지 않는다.
-grant select, insert, update, delete on public.students, public.lessons, public.summaries, public.room_state to authenticated;
+grant select, insert, update, delete on public.students, public.lessons, public.summaries, public.room_state, public.ink to authenticated;
 grant usage on all sequences in schema public to authenticated;
 -- 학생 계정 함수(create-students)가 쓰는 관리자 역할
-grant all on public.students, public.lessons, public.summaries, public.room_state to service_role;
+grant all on public.students, public.lessons, public.summaries, public.room_state, public.ink to service_role;
 
 alter table public.students enable row level security;
 alter table public.lessons enable row level security;
 alter table public.summaries enable row level security;
 alter table public.room_state enable row level security;
+alter table public.ink enable row level security;
 
 drop policy if exists "students read" on public.students;
 create policy "students read" on public.students for select to authenticated
@@ -94,7 +110,14 @@ drop policy if exists "room teacher write" on public.room_state;
 create policy "room teacher write" on public.room_state for all to authenticated
   using (public.is_teacher()) with check (public.is_teacher());
 
--- 비공개 저장소: 교과서 PDF, 단원 HTML
+drop policy if exists "ink read" on public.ink;
+create policy "ink read" on public.ink for select to authenticated
+  using (public.is_teacher() or class_no = public.my_class());
+drop policy if exists "ink teacher write" on public.ink;
+create policy "ink teacher write" on public.ink for all to authenticated
+  using (public.is_teacher()) with check (public.is_teacher());
+
+-- 비공개 저장소: 교과서 PDF, PPT용 PDF, 단원 HTML
 insert into storage.buckets (id, name, public) values ('materials', 'materials', false)
 on conflict (id) do nothing;
 drop policy if exists "materials read" on storage.objects;
@@ -110,10 +133,13 @@ drop policy if exists "materials teacher delete" on storage.objects;
 create policy "materials teacher delete" on storage.objects for delete to authenticated
   using (bucket_id = 'materials' and public.is_teacher());
 
--- 실시간 알림: 화면 고정(room_state), 새 요약(summaries)
+-- 실시간 알림: 화면 고정(room_state), 새 요약(summaries), 판서(ink)
 do $$ begin
   alter publication supabase_realtime add table public.room_state;
 exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.summaries;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.ink;
 exception when duplicate_object then null; end $$;

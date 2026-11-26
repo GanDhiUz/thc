@@ -21,6 +21,7 @@
     <select id="cls" aria-label="반"><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option></select>
     <select id="lesson" aria-label="차시"></select>
     <button id="vPdf">교과서</button>
+    <button id="vPpt">PPT</button>
     <button id="vHtml">단원 자료</button>
     <span id="quiz"></span>
     <span class="grow"></span>
@@ -30,8 +31,17 @@
   </div>
   <div class="body" id="body">
     <div class="viewer">
-      <div class="pdfbox" id="pdfbox"><canvas id="canvas"></canvas></div>
-      <div class="pager" id="pager"><button id="prev" aria-label="이전 쪽">◀</button><span id="pageNo"></span><button id="next" aria-label="다음 쪽">▶</button></div>
+      <div class="pdfbox" id="pdfbox"><div class="sheet"><canvas id="canvas"></canvas><canvas id="ink"></canvas></div></div>
+      <div class="pager" id="pager"><button id="prev" aria-label="이전 쪽">◀</button><span id="pageNo"></span><button id="next" aria-label="다음 쪽">▶</button>
+        <span class="tools">
+          <button id="pen">✏ 판서</button>
+          <select id="color" aria-label="펜 색"><option value="#d32f2f">빨강</option><option value="#1d2433">검정</option><option value="#1565c0">파랑</option><option value="#2e7d32">초록</option><option value="#ffd60066">형광 노랑</option></select>
+          <select id="size" aria-label="굵기"><option value="0.002">가늘게</option><option value="0.004" selected>보통</option><option value="0.008">굵게</option></select>
+          <button id="eraser">지우개</button>
+          <button id="inkClear">판서 지우기</button>
+          <span class="muted" id="inkMsg"></span>
+        </span>
+      </div>
       <iframe id="frame" sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads" title="단원 자료" hidden></iframe>
       <div class="empty" id="empty" hidden>자료가 없습니다. 관리 탭에서 올리세요.</div>
     </div>
@@ -51,12 +61,13 @@
 
       <section id="tAdm" hidden>
         <h3>차시 자료</h3>
-        <table><thead><tr><th>순서</th><th>제목</th><th>PDF</th><th>HTML</th><th></th></tr></thead><tbody id="lessonRows"></tbody></table>
+        <table><thead><tr><th>순서</th><th>제목</th><th>PDF</th><th>PPT</th><th>HTML</th><th></th></tr></thead><tbody id="lessonRows"></tbody></table>
         <form id="lessonForm" class="form" style="margin-top:8px">
           <b id="lfTitle">새 차시 추가</b>
           <label>순서 <input id="lfOrd" type="number" value="1" required></label>
           <label>제목 <input id="lfName" required placeholder="예: 4-3-1 발명의 개념"></label>
           <label>교과서 PDF <input id="lfPdf" type="file" accept="application/pdf"></label>
+          <label>PPT용 PDF (PowerPoint 에서 PDF 로 저장한 파일) <input id="lfPpt" type="file" accept="application/pdf"></label>
           <label>단원 HTML <input id="lfHtml" type="file" accept=".html,text/html"></label>
           <label>도입 퀴즈 링크 (젭퀴즈) <input id="lfQ1" type="url" placeholder="https://"></label>
           <label>마무리 퀴즈 링크 <input id="lfQ2" type="url" placeholder="https://"></label>
@@ -78,9 +89,12 @@
 <div class="board" id="board" hidden><button class="close" id="boardClose">닫기 ✕</button><div class="grid" id="boardGrid"></div></div>
 
 <script type="module">
-import { sb, $, esc, configured, loadLessons, PdfView, showHtml, saveHtml, printHtml, fmtTime } from "./app.js";
+import { sb, $, esc, configured, loadLessons, PdfView, Ink, wireTools, showHtml, saveHtml, printHtml, fmtTime } from "./app.js";
 
-const pdf = new PdfView($("#canvas"));
+const ink = new Ink($("#ink"), saveInk);
+const pdf = new PdfView($("#canvas"), [ink]);
+wireTools(ink);
+const lastPage = {}; // 자료를 오가도 각 자료의 쪽을 기억한다
 let lessons = [], students = [], cls = 1, cur = { lesson: null, view: "pdf", page: 1 }, locked = false, sums = [], editing = null;
 const picked = new Set();
 
@@ -111,7 +125,7 @@ $("#logout").onclick = async () => { await sb.auth.signOut(); location.reload();
 
 function fillLessons() {
   $("#lesson").innerHTML = lessons.map((l) => `<option value="${l.id}">${esc(l.title)}</option>`).join("");
-  $("#lessonRows").innerHTML = lessons.map((l) => `<tr><td>${l.ord}</td><td>${esc(l.title)}</td><td>${l.pdf_path ? "✓" : ""}</td><td>${l.html_path ? "✓" : ""}</td>
+  $("#lessonRows").innerHTML = lessons.map((l) => `<tr><td>${l.ord}</td><td>${esc(l.title)}</td><td>${l.pdf_path ? "✓" : ""}</td><td>${l.ppt_path ? "✓" : ""}</td><td>${l.html_path ? "✓" : ""}</td>
     <td><button data-edit="${l.id}">고치기</button> <button data-del="${l.id}">지우기</button></td></tr>`).join("");
 }
 
@@ -133,6 +147,7 @@ async function render(push = true) {
   const l = lessons.find((x) => x.id === cur.lesson);
   $("#lesson").value = cur.lesson ?? "";
   $("#vPdf").classList.toggle("on", cur.view === "pdf");
+  $("#vPpt").classList.toggle("on", cur.view === "ppt");
   $("#vHtml").classList.toggle("on", cur.view === "html");
   $("#lock").classList.toggle("on", locked);
   $("#lock").textContent = locked ? "화면 고정 켜짐" : "화면 고정 꺼짐";
@@ -143,30 +158,55 @@ async function render(push = true) {
     const { error } = await sb.from("room_state").upsert({ class_no: cls, lesson_id: cur.lesson, view: cur.view, page: cur.page, locked, updated_at: new Date().toISOString() });
     if (error) alert("학생 화면에 알리지 못했습니다: " + error.message);
   }
-  const path = cur.view === "pdf" ? l?.pdf_path : l?.html_path;
+  const path = l?.[cur.view + "_path"]; // pdf_path, ppt_path, html_path
   $("#empty").hidden = !!path;
-  $("#pdfbox").hidden = $("#pager").hidden = !path || cur.view !== "pdf";
+  $("#pdfbox").hidden = $("#pager").hidden = !path || cur.view === "html";
   $("#frame").hidden = !path || cur.view !== "html";
   try {
     if (path && cur.view === "html") await showHtml($("#frame"), path);
-    if (path && cur.view === "pdf") {
+    if (path && cur.view !== "html") {
       await pdf.open(path);
       await pdf.show(cur.page);
       cur.page = pdf.page;
       $("#pageNo").textContent = `${pdf.page} / ${pdf.pages}`;
+      loadInk();
     }
   } catch (e) { $("#empty").hidden = false; $("#empty").textContent = "자료를 불러오지 못했습니다: " + e.message; }
 }
 
 $("#cls").onchange = () => openClass(Number($("#cls").value));
 $("#lesson").onchange = () => { cur = { lesson: Number($("#lesson").value), view: "pdf", page: 1 }; picked.clear(); render(); loadSums(); };
-$("#vPdf").onclick = () => { cur.view = "pdf"; render(); };
-$("#vHtml").onclick = () => { cur.view = "html"; render(); };
+function setView(v) { lastPage[`${cur.lesson}:${cur.view}`] = cur.page; cur.view = v; cur.page = lastPage[`${cur.lesson}:${v}`] ?? 1; render(); }
+$("#vPdf").onclick = () => setView("pdf");
+$("#vPpt").onclick = () => setView("ppt");
+$("#vHtml").onclick = () => setView("html");
 $("#prev").onclick = () => { if (cur.page > 1) { cur.page--; render(); } };
 $("#next").onclick = () => { if (cur.page < pdf.pages) { cur.page++; render(); } };
 $("#lock").onclick = () => { locked = !locked; render(); };
-$("#panel").onclick = () => { $("#body").classList.toggle("wide"); setTimeout(() => cur.view === "pdf" && pdf.show(cur.page), 50); };
-let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => cur.view === "pdf" && pdf.show(cur.page), 200); });
+$("#panel").onclick = () => { $("#body").classList.toggle("wide"); setTimeout(() => cur.view !== "html" && pdf.show(cur.page), 50); };
+let t; addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => cur.view !== "html" && pdf.show(cur.page), 200); });
+
+// 판서: 반·차시·자료·쪽마다 따로 저장한다. 같은 반 학생 화면에는 실시간으로 나타난다.
+const inkKey = () => ({ class_no: cls, lesson_id: cur.lesson, doc: cur.view, page: cur.page });
+async function loadInk() {
+  const k = JSON.stringify(inkKey());
+  ink.set([]);
+  const { data, error } = await sb.from("ink").select("strokes").match(inkKey()).maybeSingle();
+  if (k !== JSON.stringify(inkKey())) return; // 그사이 쪽이 바뀜
+  if (error) $("#inkMsg").textContent = "판서를 불러오지 못했습니다: " + error.message;
+  ink.set(data?.strokes);
+}
+let saveQ = Promise.resolve(); // 차례대로 저장해서 예전 판서가 나중 것을 덮지 않게
+function saveInk(strokes) {
+  const row = { ...inkKey(), strokes, updated_at: new Date().toISOString() };
+  saveQ = saveQ.then(async () => {
+    const { error } = await sb.from("ink").upsert(row);
+    $("#inkMsg").textContent = error ? "판서 저장 실패: " + error.message : "";
+  });
+}
+$("#inkClear").onclick = () => {
+  if (ink.strokes.length && confirm("이 쪽의 판서를 모두 지울까요? 되돌릴 수 없습니다.")) { ink.set([]); saveInk(ink.strokes); }
+};
 
 document.querySelectorAll("[data-tab]").forEach((b) => (b.onclick = () => {
   document.querySelectorAll("[data-tab]").forEach((x) => { x.classList.toggle("on", x === b); $("#" + x.dataset.tab).hidden = x !== b; });
@@ -220,7 +260,7 @@ function editLesson(l) {
   $("#lfOrd").value = l?.ord ?? (lessons.at(-1)?.ord ?? 0) + 1;
   $("#lfName").value = l?.title ?? "";
   $("#lfQ1").value = l?.quiz_intro ?? ""; $("#lfQ2").value = l?.quiz_outro ?? "";
-  $("#lfPdf").value = $("#lfHtml").value = ""; $("#lfMsg").textContent = "";
+  $("#lfPdf").value = $("#lfPpt").value = $("#lfHtml").value = ""; $("#lfMsg").textContent = "";
 }
 $("#lfReset").onclick = () => editLesson(null);
 $("#lessonRows").onclick = async (e) => {
@@ -228,10 +268,10 @@ $("#lessonRows").onclick = async (e) => {
   if (edit) editLesson(lessons.find((l) => l.id === Number(edit)));
   if (del) {
     const l = lessons.find((x) => x.id === Number(del));
-    if (!confirm(`"${l.title}" 차시를 지울까요? 이 차시에 학생들이 낸 요약도 함께 지워지고 되돌릴 수 없습니다.`)) return;
+    if (!confirm(`"${l.title}" 차시를 지울까요? 이 차시에 학생들이 낸 요약과 판서도 함께 지워지고 되돌릴 수 없습니다.`)) return;
     const { error } = await sb.from("lessons").delete().eq("id", l.id);
     if (error) return alert("지우지 못했습니다: " + error.message);
-    await sb.storage.from("materials").remove([l.pdf_path, l.html_path].filter(Boolean));
+    await sb.storage.from("materials").remove([l.pdf_path, l.ppt_path, l.html_path].filter(Boolean));
     lessons = await loadLessons(); fillLessons(); render(false);
   }
 };
@@ -244,7 +284,7 @@ $("#lessonForm").onsubmit = async (e) => {
   const { data: saved, error } = await q.select().single();
   if (error) return msg("저장 실패: " + error.message);
   const files = {};
-  for (const [input, name, col] of [["#lfPdf", "book.pdf", "pdf_path"], ["#lfHtml", "unit.html", "html_path"]]) {
+  for (const [input, name, col] of [["#lfPdf", "book.pdf", "pdf_path"], ["#lfPpt", "ppt.pdf", "ppt_path"], ["#lfHtml", "unit.html", "html_path"]]) {
     const f = $(input).files[0];
     if (!f) continue;
     const path = `lesson-${saved.id}/${name}`;

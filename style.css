@@ -32,6 +32,12 @@ a.btn { display: inline-block; text-decoration: none; color: inherit; border: 1p
 .viewer { position: relative; min-height: 0; display: grid; grid-template-rows: 1fr auto; }
 .pdfbox { min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 8px; }
 .pdfbox canvas { box-shadow: 0 2px 12px #0002; background: #fff; }
+.sheet { position: relative; }
+.sheet canvas { display: block; }
+.sheet canvas + canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: none; box-shadow: none; mix-blend-mode: multiply; }
+.tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pager .tools button { font-size: 1em; padding: .45em .9em; }
+.pager { flex-wrap: wrap; }
 .pager { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 6px; }
 .pager button { font-size: 1.2em; padding: .3em 1.2em; }
 .viewer iframe { width: 100%; height: 100%; border: 0; background: #fff; grid-row: 1 / 3; }

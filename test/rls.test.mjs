@@ -66,4 +66,18 @@ assert.equal((await rows(T, true, "update room_state set locked=true, page=3 whe
 assert.equal((await rows(A, false, "select locked, page from room_state"))[0].page, 3, "학생이 바뀐 상태를 읽음");
 assert.ok(!(await as(T, true, "insert into storage.objects(bucket_id,name) values ('materials','lesson-1/book.pdf')")).error);
 assert.equal((await rows(A, false, "select * from storage.objects")).length, 1, "학생은 자료 읽기 가능");
+
+// 판서: 선생님만 쓰고, 같은 반 학생만 읽는다
+assert.ok(!(await as(T, true, "insert into ink(class_no,lesson_id,doc,page,strokes) values (1,1,'pdf',3,'[{\"c\":\"#000\",\"w\":0.004,\"p\":[0.1,0.2]}]')")).error);
+assert.ok(!(await as(T, true, "insert into ink(class_no,lesson_id,doc,page) values (1,1,'ppt',3) on conflict (class_no,lesson_id,doc,page) do update set strokes='[]'")).error, "PPT 판서도 저장");
+assert.equal((await rows(A, false, "select * from ink where page=3")).length, 2, "1반 학생은 1반 판서를 봄");
+assert.equal((await rows(B, false, "select * from ink")).length, 0, "2반 학생은 1반 판서 못 봄");
+await fails(A, false, "insert into ink(class_no,lesson_id,doc,page) values (1,1,'pdf',4)");
+await fails(A, false, "insert into ink(class_no,lesson_id,doc,page) values (1,1,'pdf',3) on conflict (class_no,lesson_id,doc,page) do update set strokes='[]'");
+assert.equal((await rows(A, false, "update ink set strokes='[]' returning *")).length, 0, "학생은 판서 못 바꿈");
+assert.equal((await rows(A, false, "delete from ink returning *")).length, 0, "학생은 판서 못 지움");
+assert.equal(JSON.parse(JSON.stringify((await rows(T, true, "select strokes from ink where doc='pdf'"))[0].strokes)).length, 1, "판서가 그대로 남음");
+assert.ok(!(await as(T, true, "update room_state set view='ppt' where class_no=1")).error, "화면 상태에 ppt 허용");
+assert.ok(!(await as(T, true, "update lessons set ppt_path='lesson-1/ppt.pdf'")).error);
+await fails(T, true, "update room_state set view='board' where class_no=1");
 console.log("RLS 검사 모두 통과");
